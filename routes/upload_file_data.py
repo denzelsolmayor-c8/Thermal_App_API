@@ -1,17 +1,13 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any
-from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import Base, get_async_session
 
 router = APIRouter()
-
-# Input models
 
 
 class SheetData(BaseModel):
@@ -49,59 +45,65 @@ insert_order = [
 
 
 @router.post("/api/upload-file-data")
-async def upload_file_data(payload: UploadPayload, session: AsyncSession = Depends(get_async_session)):
-    result: Dict[str, List[Dict[str, Any]]] = {
-        key: [] for key in get_model_mapping().keys()}
+async def upload_file_data(
+    payload: UploadPayload,
+    session: AsyncSession = Depends(get_async_session)
+):
+    models = get_model_mapping()
+    # prepare a buffer for each table
+    result: Dict[str, List[Dict[str, Any]]] = {name: [] for name in models}
 
+    # 1) COLUMN-BASED ROUTING: for each row, try to match it to each table
     for sheet in payload.sheets:
         for row in sheet.data:
             row_dict = dict(zip(sheet.headers, row))
 
+            # skip alarms
             desc = row_dict.get("description", "")
             if isinstance(desc, str) and "alarm" in desc.lower():
                 continue
 
-            for table_name, model in get_model_mapping().items():
-                required_cols = set(model.__table__.columns.keys())
-                entry = {k: v for k, v in row_dict.items()
-                         if k in required_cols}
+            # try every table
+            for table_name, model in models.items():
+                cols = set(model.__table__.columns.keys())
+                # Remove any auto-generated PK column names:
+                non_auto = cols - {"rel_id", "id"}
 
-                # allow optional rel_id
-                if set(entry.keys()) >= required_cols - {"rel_id"}:
+                entry = {k: v for k, v in row_dict.items() if k in cols}
+                if non_auto.issubset(entry.keys()):
                     result[table_name].append(entry)
 
-    model_mapping = get_model_mapping()
-
+    # 2) BULK INSERT each table in dependency order
     for table_name in insert_order:
-        entries = result.get(table_name, [])
+        entries = result.get(table_name)
         if not entries:
             continue
+        model = models[table_name]
 
-        model = model_mapping[table_name]
-
-        # Explicit type conversions before bulk insert
-        for entry in entries:
-            try:
-                if table_name == "camera_presets":
-                    entry["preset_number"] = int(entry["preset_number"])
-                elif table_name == "camera_in_zone":
-                    entry["preset_number"] = int(
-                        entry.get("preset_number", 0))  # optional
-                elif table_name == "temperature" and "measurement" in entry:
-                    entry["measurement"] = float(entry["measurement"])
-            except Exception as e:
-                print(f"[WARN] Skipping row due to conversion error: {entry}")
-                print(e)
+        # type conversions
+        for e in entries:
+            if table_name in ("camera_presets", "camera_in_zone"):
+                if "preset_number" in e:
+                    e["preset_number"] = int(e["preset_number"])
+            if table_name == "temperatures":
+                e["point_in_preset"] = int(e["point_in_preset"])
+                # preset_number too
+                e["preset_number"] = int(e["preset_number"])
 
         try:
-           # Bulk insert with conflict ignore
             stmt = pg_insert(model).values(entries).on_conflict_do_nothing()
             await session.execute(stmt)
+        except Exception as exc:
+            print(f"[ERROR] {table_name} bulk insert failed:", exc)
 
-        except Exception as e:
-            print(f"[ERROR] Bulk insert failed for {table_name}")
-            print(e)
+    # commit once
+    try:
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(500, f"Commit failed: {exc}")
 
-    await session.commit()
-
-    return {"message": "Upload complete", "record_count": {k: len(v) for k, v in result.items()}}
+    return {
+        "message": "Upload complete",
+        "record_count": {t: len(v) for t, v in result.items()}
+    }
