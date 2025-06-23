@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from routes import upload_file_data
-from mapping_preview import preview_mapped_data
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi import FastAPI, Depends, HTTPException
 import httpx
@@ -69,15 +68,6 @@ async def read_table(table_name: str, db: AsyncSession = Depends(get_db)):
     rows = result.scalars().all()
 
     return [dict(row.__dict__) for row in rows if "__sa_instance_state" not in row.__dict__]
-
-
-@app.post("/preview")
-async def preview_excel_mappings(file: UploadFile = File(...)):
-    if not file.filename.endswith(".xlsx"):
-        raise HTTPException(
-            status_code=400, detail="Only .xlsx files are supported")
-    preview = preview_mapped_data(file.file)
-    return preview
 
 
 # # 2ND OPTION for NodeRED real time updates

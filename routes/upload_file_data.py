@@ -5,6 +5,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import Base, get_async_session
 
@@ -26,40 +27,6 @@ class UploadPayload(BaseModel):
     sheets: List[SheetData]
 
 
-# Header-to-database mapping
-header_mapping = {
-    "camera_configs": {
-        "camera_id": "Camera ID",
-        "camera_ip": "Camera IP",
-        "camera_name": "Camera Name",
-        "camera_location": "Camera Location",
-        "camera_type": "Camera Type",
-        "brand": "Brand",
-        "model": "Model",
-        "firmware_version": "Firmware Version",
-    },
-    "camera_in_zone": {
-        "camera_id": "Camera ID",
-        "zone_id": "Zone ID",
-    },
-    "camera_presets": {
-        "preset_number": "Preset Number",
-        "camera_id": "Camera ID",
-    },
-    "zones": {
-        "zone_id": "Zone ID",
-        "zone_name": "Zone Name",
-    },
-    "customer": {
-        "client_id": "Client ID",
-        "client_name": "Client Name",
-        "camera_id": "Camera ID",
-    }
-}
-
-# Automapped table references
-
-
 def get_model_mapping():
     return {
         "camera_configs": Base.classes.camera_configs,
@@ -67,43 +34,44 @@ def get_model_mapping():
         "camera_presets": Base.classes.camera_presets,
         "zones": Base.classes.zones,
         "customer": Base.classes.customer,
+        "temperatures": Base.classes.temperatures,
     }
 
 
-insert_order = ["zones", "camera_configs",
-                "camera_presets", "camera_in_zone", "customer"]
+insert_order = [
+    "zones",
+    "camera_configs",
+    "camera_presets",
+    "camera_in_zone",
+    "customer",
+    "temperatures",
+]
 
 
 @router.post("/api/upload-file-data")
 async def upload_file_data(payload: UploadPayload, session: AsyncSession = Depends(get_async_session)):
     result: Dict[str, List[Dict[str, Any]]] = {
-        key: [] for key in header_mapping.keys()}
+        key: [] for key in get_model_mapping().keys()}
 
     for sheet in payload.sheets:
         for row in sheet.data:
             row_dict = dict(zip(sheet.headers, row))
 
-            # Optional filter: skip rows with 'Alarm' in description
-            desc = row_dict.get("DESCRIPTION(V1)", "")
+            desc = row_dict.get("description", "")
             if isinstance(desc, str) and "alarm" in desc.lower():
                 continue
 
-            for table_name, mappings in header_mapping.items():
-                entry = {}
-                missing_field = False
+            for table_name, model in get_model_mapping().items():
+                required_cols = set(model.__table__.columns.keys())
+                entry = {k: v for k, v in row_dict.items()
+                         if k in required_cols}
 
-                for db_col, header_name in mappings.items():
-                    value = row_dict.get(header_name)
-                    if value is None:
-                        missing_field = True
-                        break
-                    entry[db_col] = value
-
-                if not missing_field:
+                # allow optional rel_id
+                if set(entry.keys()) >= required_cols - {"rel_id"}:
                     result[table_name].append(entry)
+
     model_mapping = get_model_mapping()
 
-    # Upload to database
     for table_name in insert_order:
         entries = result.get(table_name, [])
         if not entries:
@@ -111,21 +79,28 @@ async def upload_file_data(payload: UploadPayload, session: AsyncSession = Depen
 
         model = model_mapping[table_name]
 
+        # Explicit type conversions before bulk insert
         for entry in entries:
             try:
-                # Explicit type conversions per table
                 if table_name == "camera_presets":
                     entry["preset_number"] = int(entry["preset_number"])
                 elif table_name == "camera_in_zone":
                     entry["preset_number"] = int(
-                        entry["preset_number"])  # if it exists there too
-
-                stmt = insert(model).values(**entry)
-                await session.execute(stmt)
-
+                        entry.get("preset_number", 0))  # optional
+                elif table_name == "temperature" and "measurement" in entry:
+                    entry["measurement"] = float(entry["measurement"])
             except Exception as e:
-                print(f"[ERROR] Failed to insert into {table_name}: {entry}")
+                print(f"[WARN] Skipping row due to conversion error: {entry}")
                 print(e)
+
+        try:
+           # Bulk insert with conflict ignore
+            stmt = pg_insert(model).values(entries).on_conflict_do_nothing()
+            await session.execute(stmt)
+
+        except Exception as e:
+            print(f"[ERROR] Bulk insert failed for {table_name}")
+            print(e)
 
     await session.commit()
 
