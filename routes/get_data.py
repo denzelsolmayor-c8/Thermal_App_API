@@ -68,6 +68,7 @@ async def data_fixed(
             cc.brand,
             cc.model,
             cc.firmware_version,
+            cc.client_id,
 
             z.zone_id,
             z.zone_name,
@@ -93,7 +94,7 @@ async def data_fixed(
             LEFT JOIN temperatures t ON cp.preset_number = t.preset_number
 
             -- Join customer table
-            LEFT JOIN customer c ON cc.camera_id = c.camera_id;
+            LEFT JOIN customer c ON cc.client_id = c.client_id;
 
 
 
@@ -151,6 +152,7 @@ async def data_dynamic(
             cc.brand,
             cc.model,
             cc.firmware_version,
+            cc.client_id,
 
             z.zone_id,
             z.zone_name,
@@ -169,7 +171,7 @@ async def data_dynamic(
         LEFT JOIN zones z ON cz.zone_id = z.zone_id
         LEFT JOIN camera_presets cp ON cc.camera_id = cp.camera_id
         LEFT JOIN temperatures t ON cp.preset_number = t.preset_number
-        LEFT JOIN customer c ON cc.camera_id = c.camera_id
+        LEFT JOIN customer c ON cc.client_id = c.client_id
         WHERE {where_sql}
     """)
 
