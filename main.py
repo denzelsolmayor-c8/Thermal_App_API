@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
-from routes import upload_file_data, get_data
+from routes import upload_file_data, get_data, update_data
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi import FastAPI, Depends, HTTPException
 import httpx
@@ -29,6 +29,7 @@ app.add_middleware(
 
 app.include_router(upload_file_data.router)
 app.include_router(get_data.router)
+app.include_router(update_data.router)
 
 
 @app.get("/")

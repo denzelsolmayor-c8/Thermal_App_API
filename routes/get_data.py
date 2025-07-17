@@ -53,8 +53,8 @@ async def data_fixed(
     headers = [
         "camera_id", "camera_ip", "camera_name", "camera_location",
         "camera_type", "brand", "model", "firmware_version",
-        "zone_id", "zone_name", "preset_number",
-        "temperature_id", "measurement", "description", "point_in_preset",
+        "zone_id", "zone_name", "preset_number", "temperature_id",
+        "measurement", "measurement_type", "description", "point_in_preset",
         "client_id", "client_name"
     ]
 
@@ -77,24 +77,27 @@ async def data_fixed(
 
             t.id AS temperature_id,
             t.measurement,
+            t.measurement_type,
             t.description,
             t.point_in_preset,
 
             c.client_id,
             c.client_name
 
-            FROM camera_configs cc
+        FROM mlc_camera_configs cc
 
-            -- Trust only valid camera + zone pairs
-            LEFT JOIN camera_in_zone cz ON cc.camera_id = cz.camera_id
-            LEFT JOIN zones z ON cz.zone_id = z.zone_id
+        -- Join customer table
+        LEFT JOIN mlc_customer c ON cc.client_id = c.client_id
 
-            -- Join camera presets and their temperatures
-            LEFT JOIN camera_presets cp ON cc.camera_id = cp.camera_id
-            LEFT JOIN temperatures t ON cp.preset_number = t.preset_number
+        -- Join camera presets
+        LEFT JOIN mlc_camera_presets cp ON cc.camera_id = cp.camera_id
 
-            -- Join customer table
-            LEFT JOIN customer c ON cc.client_id = c.client_id;
+        -- Join zone from presets (no more need for camera_in_zone)
+        LEFT JOIN mlc_zones z ON cp.zone_id = z.zone_id
+
+        -- Join temperatures via preset ID
+        LEFT JOIN mlc_temperatures t ON cp.id = t.preset_id;
+
 
 
 
@@ -115,8 +118,8 @@ async def data_dynamic(
     headers = [
         "camera_id", "camera_ip", "camera_name", "camera_location",
         "camera_type", "brand", "model", "firmware_version",
-        "zone_id", "zone_name", "preset_number",
-        "temperature_id", "measurement", "description", "point_in_preset",
+        "zone_id", "zone_name", "preset_number", "temperature_id",
+        "measurement", "measurement_type", "description", "point_in_preset",
         "client_id", "client_name"
     ]
 
@@ -161,18 +164,20 @@ async def data_dynamic(
 
             t.id AS temperature_id,
             t.measurement,
+            t.measurement_type,
             t.description,
             t.point_in_preset,
 
             c.client_id,
             c.client_name
-        FROM camera_configs cc
-        LEFT JOIN camera_in_zone cz ON cc.camera_id = cz.camera_id
-        LEFT JOIN zones z ON cz.zone_id = z.zone_id
-        LEFT JOIN camera_presets cp ON cc.camera_id = cp.camera_id
-        LEFT JOIN temperatures t ON cp.preset_number = t.preset_number
-        LEFT JOIN customer c ON cc.client_id = c.client_id
+
+        FROM mlc_camera_configs cc
+        LEFT JOIN mlc_camera_presets cp ON cc.camera_id = cp.camera_id
+        LEFT JOIN mlc_zones z ON cp.zone_id = z.zone_id
+        LEFT JOIN mlc_temperatures t ON cp.id = t.preset_id
+        LEFT JOIN mlc_customer c ON cc.client_id = c.client_id
         WHERE {where_sql}
+
     """)
 
     result = await session.execute(sql, params)

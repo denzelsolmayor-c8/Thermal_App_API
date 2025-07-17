@@ -25,22 +25,20 @@ class UploadPayload(BaseModel):
 
 def get_model_mapping():
     return {
-        "camera_configs": Base.classes.camera_configs,
-        "camera_in_zone": Base.classes.camera_in_zone,
-        "camera_presets": Base.classes.camera_presets,
-        "zones": Base.classes.zones,
-        "customer": Base.classes.customer,
-        "temperatures": Base.classes.temperatures,
+        "mlc_camera_configs": Base.classes.mlc_camera_configs,
+        "mlc_camera_presets": Base.classes.mlc_camera_presets,
+        "mlc_zones": Base.classes.mlc_zones,
+        "mlc_customer": Base.classes.mlc_customer,
+        "mlc_temperatures": Base.classes.mlc_temperatures,
     }
 
 
 insert_order = [
-    "zones",
-    "customer",
-    "camera_configs",
-    "camera_presets",
-    "camera_in_zone",
-    "temperatures",
+    "mlc_zones",
+    "mlc_customer",
+    "mlc_camera_configs",
+    "mlc_camera_presets",
+    "mlc_temperatures",
 ]
 
 
@@ -92,10 +90,10 @@ async def upload_file_data(
 
         # Optional type conversions
         for e in entries:
-            if table_name in ("camera_presets", "camera_in_zone"):
+            if table_name == "mlc_camera_presets":
                 if "preset_number" in e:
                     e["preset_number"] = int(e["preset_number"])
-            if table_name == "temperatures":
+            if table_name == "mlc_temperatures":
                 if "point_in_preset" in e:
                     e["point_in_preset"] = int(e["point_in_preset"])
                 if "preset_number" in e:
