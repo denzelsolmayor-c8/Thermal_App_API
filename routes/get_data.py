@@ -92,11 +92,14 @@ async def data_fixed(
         -- Join camera presets
         LEFT JOIN mlc_camera_presets cp ON cc.camera_id = cp.camera_id
 
-        -- Join zone from presets (no more need for camera_in_zone)
+        -- Join zone from presets
         LEFT JOIN mlc_zones z ON cp.zone_id = z.zone_id
 
         -- Join temperatures via preset ID
-        LEFT JOIN mlc_temperatures t ON cp.id = t.preset_id;
+        LEFT JOIN mlc_temperatures t ON cp.id = t.preset_id
+
+        ORDER BY cp.preset_number;
+
 
 
 
@@ -177,6 +180,10 @@ async def data_dynamic(
         LEFT JOIN mlc_temperatures t ON cp.id = t.preset_id
         LEFT JOIN mlc_customer c ON cc.client_id = c.client_id
         WHERE {where_sql}
+        
+        
+        ORDER BY cp.preset_number;
+
 
     """)
 
