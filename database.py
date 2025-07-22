@@ -2,8 +2,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.automap import automap_base
 from typing import AsyncGenerator
+# administrator:helios@helios-configdb:5432/helios
 
-DATABASE_URL = "postgresql+asyncpg://postgres:postgres@10.147.18.242:5433/helios"
+DATABASE_URL = "postgresql+asyncpg://administrator:helios@10.147.18.242:5433/helios"
 
 engine = create_async_engine(DATABASE_URL, echo=True)
 AsyncSessionLocal = sessionmaker(

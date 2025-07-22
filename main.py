@@ -1,8 +1,14 @@
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from routes import upload_file_data, get_data, update_data
+from routes import egress_endpoints_routes
+from routes import schedule_routes
+from routes import data_selector_routes
+from routes import configuration_routes
+from routes import combined_data_routes  # NEW: Import the new router
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends  # Consolidated FastAPI imports
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -16,6 +22,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
+# Original FastAPI instance, now with lifespan
 app = FastAPI(lifespan=lifespan)
 
 
@@ -30,6 +37,11 @@ app.add_middleware(
 app.include_router(upload_file_data.router)
 app.include_router(get_data.router)
 app.include_router(update_data.router)
+app.include_router(egress_endpoints_routes.router)
+app.include_router(schedule_routes.router)
+app.include_router(data_selector_routes.router)
+app.include_router(configuration_routes.router)
+app.include_router(combined_data_routes.router)  # NEW: Include the new router
 
 
 @app.get("/")
@@ -37,6 +49,11 @@ def read_root():
     return {"Hello": "World"}
 
 # Provide DB session per request
+
+
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
 
 
 NODE_RED_URL = "http://10.147.18.242:1880/thermal-data"
@@ -52,13 +69,7 @@ async def camera_data():
     return resp.json()
 
 
-async def get_db():
-    async with AsyncSessionLocal() as session:
-        yield session
-
 # Example route to read any table by name
-
-
 @app.get("/data/{table_name}")
 async def read_table(table_name: str, db: AsyncSession = Depends(get_db)):
     try:
@@ -70,36 +81,3 @@ async def read_table(table_name: str, db: AsyncSession = Depends(get_db)):
     rows = result.scalars().all()
 
     return [dict(row.__dict__) for row in rows if "__sa_instance_state" not in row.__dict__]
-
-
-# # 2ND OPTION for NodeRED real time updates
-# # If your Node‑RED is already publishing messages (e.g. sensor readings) to an MQTT broker,
-# # you can have FastAPI subscribe in the background and cache the latest values.
-
-# # from fastapi import FastAPI
-# # import threading
-# # import paho.mqtt.client as mqtt
-
-# # app = FastAPI()
-# # latest_data = {}
-
-# # def on_message(client, userdata, msg):
-# #     # msg.topic == "sensors/temperature"
-# #     latest_data[msg.topic] = msg.payload.decode()
-
-# # def mqtt_thread():
-# #     client = mqtt.Client()
-# #     client.on_message = on_message
-# #     client.connect("localhost", 1883)
-# #     client.subscribe("sensors/#")
-# #     client.loop_forever()
-
-# # @app.on_event("startup")
-# # def start_mqtt():
-# #     thread = threading.Thread(target=mqtt_thread, daemon=True)
-# #     thread.start()
-
-# # @app.get("/mqtt-data/{topic}")
-# # def get_mqtt_data(topic: str):
-# #     key = f"sensors/{topic}"
-# #     return { "topic": key, "value": latest_data.get(key) }
