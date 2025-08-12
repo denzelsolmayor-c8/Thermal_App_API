@@ -84,18 +84,32 @@ def convert_httpurl_to_str(data: dict[str, Any]) -> dict[str, Any]:
 # Commented out the POST endpoint as create functionality is removed
 
 
+class EgressEndpointCreate(EgressEndpointBase):
+    id: str = Field(..., max_length=128, description="Unique identifier for the egress endpoint.")
+
 @router.post("/", response_model=EgressEndpointResponse, status_code=status.HTTP_201_CREATED)
 async def create_egress_endpoint(
-    # Changed to Any to prevent Pydantic validation for a non-existent route
-    endpoint_data: Any,
+    endpoint_data: EgressEndpointCreate,
     db: AsyncSession = Depends(get_async_session)
 ):
     """
     Creates a new Egress Endpoint in the database.
     Raises a 400 error if an endpoint with the given ID already exists.
     """
-    raise HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
-                        detail="Endpoint creation is not allowed.")
+    EgressEndpointDB = Base.classes.eds_egress_endpoints
+
+    # Ensure uniqueness
+    existing = await db.execute(select(EgressEndpointDB).where(EgressEndpointDB.id == endpoint_data.id))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=400, detail=f"Egress Endpoint with ID '{endpoint_data.id}' already exists.")
+
+    # Prepare data for DB (use internal field names, not aliases)
+    create_dict = convert_httpurl_to_str(endpoint_data.model_dump(by_alias=False))
+    db_obj = EgressEndpointDB(**create_dict)
+    db.add(db_obj)
+    await db.commit()
+    await db.refresh(db_obj)
+    return db_obj
 
 
 @router.get("/", response_model=List[EgressEndpointResponse])

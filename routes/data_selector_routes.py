@@ -67,19 +67,30 @@ class DataSelectorResponse(DataSelectorBase):
 
 # --- API Endpoints ---
 
-# Commented out the POST endpoint as create functionality is removed
+class DataSelectorCreate(DataSelectorBase):
+    id: str = Field(..., max_length=128, description="Unique identifier for the data selector.")
+
 @router.post("/", response_model=DataSelectorResponse, status_code=status.HTTP_201_CREATED)
 async def create_data_selector(
-    # Changed to Any to prevent Pydantic validation for a non-existent route
-    selector_data: Any,
+    selector_data: DataSelectorCreate,
     db: AsyncSession = Depends(get_async_session)
 ):
     """
     Creates a new Data Selector in the database.
     Raises a 400 error if a selector with the given ID already exists.
     """
-    raise HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
-                        detail="Data Selector creation is not allowed.")
+    DataSelectorDB = Base.classes.eds_data_selectors
+
+    existing = await db.execute(select(DataSelectorDB).where(DataSelectorDB.id == selector_data.id))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=400, detail=f"Data Selector with ID '{selector_data.id}' already exists.")
+
+    create_dict = selector_data.model_dump(by_alias=False)
+    db_obj = DataSelectorDB(**create_dict)
+    db.add(db_obj)
+    await db.commit()
+    await db.refresh(db_obj)
+    return db_obj
 
 
 @router.get("/", response_model=List[DataSelectorResponse])
