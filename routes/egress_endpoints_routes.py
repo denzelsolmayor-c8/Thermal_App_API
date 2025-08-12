@@ -199,10 +199,38 @@ async def update_egress_endpoint(
 #         select(EgressEndpointDB).where(EgressEndpointDB.id == egress_endpoint_id)
 #     )
 #     db_endpoint = result.scalar_one_or_none()
-
+#
 #     if db_endpoint is None:
 #         raise HTTPException(status_code=404, detail="Egress Endpoint not found")
-
+#
 #     await db.delete(db_endpoint)
 #     await db.commit()
 #     return
+
+@router.delete("/{egress_endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_egress_endpoint(
+    egress_endpoint_id: str,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Delete an Egress Endpoint if not referenced by any configuration."""
+    EgressEndpointDB = Base.classes.eds_egress_endpoints
+    ConfigurationDB = Base.classes.eds_egress_configurations
+
+    # Check references in configurations
+    ref_result = await db.execute(
+        select(ConfigurationDB).where(ConfigurationDB.endpointId == egress_endpoint_id)
+    )
+    if ref_result.scalars().first() is not None:
+        raise HTTPException(status_code=400, detail="Cannot delete endpoint: it is referenced by one or more configurations.")
+
+    # Find endpoint
+    result = await db.execute(
+        select(EgressEndpointDB).where(EgressEndpointDB.id == egress_endpoint_id)
+    )
+    db_endpoint = result.scalar_one_or_none()
+    if db_endpoint is None:
+        raise HTTPException(status_code=404, detail="Egress Endpoint not found")
+
+    await db.delete(db_endpoint)
+    await db.commit()
+    return

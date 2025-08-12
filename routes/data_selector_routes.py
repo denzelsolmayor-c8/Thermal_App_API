@@ -173,10 +173,33 @@ async def update_data_selector(
 #         select(DataSelectorDB).where(DataSelectorDB.id == selector_id)
 #     )
 #     db_selector = result.scalar_one_or_none()
-
+#
 #     if db_selector is None:
 #         raise HTTPException(status_code=404, detail="Data Selector not found")
-
+#
 #     await db.delete(db_selector)
 #     await db.commit()
 #     return
+
+@router.delete("/{selector_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_data_selector(
+    selector_id: str,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Delete a Data Selector if not referenced by any configuration mapping."""
+    DataSelectorDB = Base.classes.eds_data_selectors
+    MappingDB = Base.classes.eds_egress_config_data_selectors_mapping
+
+    # Check mapping references
+    ref_result = await db.execute(select(MappingDB).where(MappingDB.ds_id == selector_id))
+    if ref_result.scalars().first() is not None:
+        raise HTTPException(status_code=400, detail="Cannot delete data selector: it is referenced by one or more configurations.")
+
+    result = await db.execute(select(DataSelectorDB).where(DataSelectorDB.id == selector_id))
+    db_selector = result.scalar_one_or_none()
+    if db_selector is None:
+        raise HTTPException(status_code=404, detail="Data Selector not found")
+
+    await db.delete(db_selector)
+    await db.commit()
+    return
