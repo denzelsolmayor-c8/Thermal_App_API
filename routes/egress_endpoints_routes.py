@@ -218,7 +218,7 @@ async def delete_egress_endpoint(
 
     # Check references in configurations
     ref_result = await db.execute(
-        select(ConfigurationDB).where(ConfigurationDB.endpointId == egress_endpoint_id)
+        select(ConfigurationDB).where(ConfigurationDB.endpointid == egress_endpoint_id)
     )
     if ref_result.scalars().first() is not None:
         raise HTTPException(status_code=400, detail="Cannot delete endpoint: it is referenced by one or more configurations.")

@@ -184,7 +184,7 @@ async def delete_schedule(
 
     # Check references in configurations
     ref_result = await db.execute(
-        select(ConfigurationDB).where(ConfigurationDB.scheduleId == schedule_id)
+        select(ConfigurationDB).where(ConfigurationDB.scheduleid == schedule_id)
     )
     if ref_result.scalars().first() is not None:
         raise HTTPException(status_code=400, detail="Cannot delete schedule: it is referenced by one or more configurations.")
