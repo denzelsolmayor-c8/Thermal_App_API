@@ -59,19 +59,30 @@ class ScheduleResponse(ScheduleBase):
 
 # --- API Endpoints ---
 
-# Commented out the POST endpoint as create functionality is removed
+class ScheduleCreate(ScheduleBase):
+    id: str = Field(..., max_length=128, description="Unique identifier for the schedule.")
+
 @router.post("/", response_model=ScheduleResponse, status_code=status.HTTP_201_CREATED)
 async def create_schedule(
-    # Changed to Any to prevent Pydantic validation for a non-existent route
-    schedule_data: Any,
+    schedule_data: ScheduleCreate,
     db: AsyncSession = Depends(get_async_session)
 ):
     """
     Creates a new Schedule in the database.
     Raises a 400 error if a schedule with the given ID already exists.
     """
-    raise HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
-                        detail="Schedule creation is not allowed.")
+    ScheduleDB = Base.classes.eds_schedules
+
+    existing = await db.execute(select(ScheduleDB).where(ScheduleDB.id == schedule_data.id))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=400, detail=f"Schedule with ID '{schedule_data.id}' already exists.")
+
+    create_dict = schedule_data.model_dump(by_alias=False)
+    db_obj = ScheduleDB(**create_dict)
+    db.add(db_obj)
+    await db.commit()
+    await db.refresh(db_obj)
+    return db_obj
 
 
 @router.get("/", response_model=List[ScheduleResponse])
@@ -154,10 +165,36 @@ async def update_schedule(
 #         select(ScheduleDB).where(ScheduleDB.id == schedule_id)
 #     )
 #     db_schedule = result.scalar_one_or_none()
-
+#
 #     if db_schedule is None:
 #         raise HTTPException(status_code=404, detail="Schedule not found")
-
+#
 #     await db.delete(db_schedule)
 #     await db.commit()
 #     return
+
+@router.delete("/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_schedule(
+    schedule_id: str,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Delete a Schedule if not referenced by any configuration."""
+    ScheduleDB = Base.classes.eds_schedules
+    ConfigurationDB = Base.classes.eds_egress_configurations
+
+    # Check references in configurations
+    ref_result = await db.execute(
+        select(ConfigurationDB).where(ConfigurationDB.scheduleid == schedule_id)
+    )
+    if ref_result.scalars().first() is not None:
+        raise HTTPException(status_code=400, detail="Cannot delete schedule: it is referenced by one or more configurations.")
+
+    # Find schedule
+    result = await db.execute(select(ScheduleDB).where(ScheduleDB.id == schedule_id))
+    db_schedule = result.scalar_one_or_none()
+    if db_schedule is None:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    await db.delete(db_schedule)
+    await db.commit()
+    return

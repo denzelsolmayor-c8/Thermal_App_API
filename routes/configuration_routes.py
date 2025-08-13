@@ -199,3 +199,24 @@ async def update_configuration(config_id: str, config_update_data: Configuration
     await db.refresh(refreshed_config)
     # Return hydrated config
     return await hydrate_configuration(refreshed_config, db)
+
+
+@router.delete("/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_configuration(config_id: str, db: AsyncSession = Depends(get_async_session)):
+    """Delete configuration and its selector mappings."""
+    ConfigurationDB = Base.classes.eds_egress_configurations
+    MappingDB = Base.classes.eds_egress_config_data_selectors_mapping
+
+    # Find configuration
+    result = await db.execute(select(ConfigurationDB).where(ConfigurationDB.id == config_id))
+    db_config = result.scalar_one_or_none()
+    if db_config is None:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+
+    # Remove selector mappings first
+    await db.execute(delete(MappingDB).where(MappingDB.ec_id == config_id))
+
+    # Delete configuration
+    await db.delete(db_config)
+    await db.commit()
+    return
