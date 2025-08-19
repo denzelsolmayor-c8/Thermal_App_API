@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, insert, update, delete
-from passlib.context import CryptContext
+import hashlib
 from typing import Optional, List
 import os
 
@@ -12,8 +12,8 @@ from database import Base, get_async_session
 router = APIRouter(prefix="", tags=["user-management"])  # no prefix to keep endpoints short
 
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+def hash_password_sha256(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 def get_default_password() -> str:
@@ -68,7 +68,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_async_sess
     if not user_row:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    if not pwd_context.verify(payload.password, user_row.password):
+    if hash_password_sha256(payload.password) != user_row.password:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     # resolve role name
@@ -79,7 +79,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_async_sess
         role_name = getattr(role, "role_name", None)
 
     # Determine if they are still using the default password by comparing the stored hash
-    default_pwd = pwd_context.verify(get_default_password(), user_row.password)
+    default_pwd = (hash_password_sha256(get_default_password()) == user_row.password)
 
     user_dict = {
         "id": user_row.id,
@@ -100,10 +100,10 @@ async def change_password(payload: ChangePasswordRequest, db: AsyncSession = Dep
     if not user_row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    if not pwd_context.verify(payload.current_password, user_row.password):
+    if hash_password_sha256(payload.current_password) != user_row.password:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
 
-    new_hash = pwd_context.hash(payload.new_password)
+    new_hash = hash_password_sha256(payload.new_password)
     await db.execute(
         update(Users)
         .where(Users.id == user_row.id)
@@ -152,7 +152,7 @@ async def create_user(payload: CreateUserRequest, db: AsyncSession = Depends(get
         role_id = role.id
 
     default_password = payload.default_password or get_default_password()
-    password_hash = pwd_context.hash(default_password)
+    password_hash = hash_password_sha256(default_password)
 
     await db.execute(
         insert(Users).values(username=payload.username, password=password_hash, role_id=role_id)
