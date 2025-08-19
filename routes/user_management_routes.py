@@ -17,7 +17,7 @@ def hash_password_sha256(password: str) -> str:
 
 
 def get_default_password() -> str:
-    return os.getenv("DEFAULT_USER_PASSWORD", "ChangeMe123!")
+    return os.getenv("DEFAULT_USER_PASSWORD", "helios")
 
 
 class LoginRequest(BaseModel):
