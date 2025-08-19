@@ -16,6 +16,16 @@ def hash_password_sha256(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
+def is_sha256_hex(value: str) -> bool:
+    if not isinstance(value, str) or len(value) != 64:
+        return False
+    try:
+        int(value, 16)
+        return True
+    except Exception:
+        return False
+
+
 def get_default_password() -> str:
     return os.getenv("DEFAULT_USER_PASSWORD", "helios")
 
@@ -68,8 +78,23 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_async_sess
     if not user_row:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    if hash_password_sha256(payload.password) != user_row.password:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    stored_password = user_row.password or ""
+    migrated = False
+    if is_sha256_hex(stored_password):
+        if hash_password_sha256(payload.password) != stored_password:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    else:
+        # One-time plaintext migration path
+        if payload.password != stored_password:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        # Migrate to SHA-256
+        new_hash = hash_password_sha256(payload.password)
+        await db.execute(
+            update(Users).where(Users.id == user_row.id).values(password=new_hash)
+        )
+        await db.commit()
+        migrated = True
+        stored_password = new_hash
 
     # resolve role name
     role_name = None
@@ -79,7 +104,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_async_sess
         role_name = getattr(role, "role_name", None)
 
     # Determine if they are still using the default password by comparing the stored hash
-    default_pwd = (hash_password_sha256(get_default_password()) == user_row.password)
+    default_pwd = (hash_password_sha256(get_default_password()) == stored_password)
 
     user_dict = {
         "id": user_row.id,
@@ -89,7 +114,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_async_sess
     }
 
     # UI can treat this as a token for now; swap to real JWT later
-    return TokenResponse(access_token="token", user=user_dict, must_change_password=default_pwd)
+    return TokenResponse(access_token="token", user=user_dict, must_change_password=bool(default_pwd or migrated))
 
 
 @router.post("/auth/change-password")
@@ -100,8 +125,23 @@ async def change_password(payload: ChangePasswordRequest, db: AsyncSession = Dep
     if not user_row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    if hash_password_sha256(payload.current_password) != user_row.password:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+    stored = user_row.password or ""
+    if is_sha256_hex(stored):
+        if hash_password_sha256(payload.current_password) != stored:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+    else:
+        if payload.current_password != stored:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+
+    # NIST guidelines: block extremely common passwords and those containing username
+    COMMON = {
+        "123456","password","123456789","qwerty","12345678","111111","123123","abc123","password1","1234567",
+        "iloveyou","000000","zaq12wsx","dragon","sunshine","letmein","monkey","football","admin","welcome"
+    }
+    if payload.new_password.lower() in COMMON:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password is too common")
+    if payload.username.lower() in payload.new_password.lower():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must not contain username")
 
     new_hash = hash_password_sha256(payload.new_password)
     await db.execute(
@@ -208,4 +248,3 @@ async def role_privileges(role_id: int, db: AsyncSession = Depends(get_async_ses
     p_res = await db.execute(select(Privs).where(Privs.id.in_(priv_ids)))
     privs = p_res.scalars().all()
     return [{"id": p.id, "privilege_name": p.privilege_name, "description": getattr(p, "description", None)} for p in privs]
-
