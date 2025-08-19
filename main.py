@@ -6,6 +6,7 @@ from routes import schedule_routes
 from routes import data_selector_routes
 from routes import configuration_routes
 from routes import combined_data_routes  # NEW: Import the new router
+from routes import user_management_routes
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi import FastAPI, Depends  # Consolidated FastAPI imports
@@ -42,6 +43,7 @@ app.include_router(schedule_routes.router)
 app.include_router(data_selector_routes.router)
 app.include_router(configuration_routes.router)
 app.include_router(combined_data_routes.router)  # NEW: Include the new router
+app.include_router(user_management_routes.router)
 
 
 @app.get("/")
