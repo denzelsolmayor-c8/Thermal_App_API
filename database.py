@@ -4,6 +4,7 @@ from sqlalchemy.ext.automap import automap_base
 from typing import AsyncGenerator
 # administrator:helios@helios-configdb:5432/helios
 # administrator:helios@10.147.18.242:5433/helios
+# administrator:helios@10.20.2.102:5432/helios
 
 DATABASE_URL = "postgresql+asyncpg://administrator:helios@helios-configdb:5432/helios"
 

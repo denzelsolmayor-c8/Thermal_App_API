@@ -83,7 +83,8 @@ async def upload_file_data(
                 non_auto = cols - {"rel_id", "id", "created_at", "updated_at"}
 
                 # Special handling for mlc_temperatures:
-                # We need 'preset_number' from the input row to link to mlc_camera_presets.
+                # We need 'preset_number', 'camera_id', and 'zone_id' from the input row
+                # to link to mlc_camera_presets using a composite key.
                 if table_name == "mlc_temperatures":
                     # Create an entry with only columns relevant to the mlc_temperatures table
                     current_temp_entry = {k: v for k,
@@ -105,6 +106,17 @@ async def upload_file_data(
                         print(
                             f"[WARNING] Skipping temperature entry due to invalid 'preset_number' (cannot convert to int) for lookup: '{preset_number_from_input}'. Row: {row_dict}")
                         continue
+
+                    # Also capture camera_id and zone_id from the input row for composite lookup
+                    camera_id_for_lookup = row_dict.get("camera_id")
+                    zone_id_for_lookup = row_dict.get("zone_id")
+                    if not camera_id_for_lookup or not zone_id_for_lookup:
+                        print(
+                            f"[WARNING] Skipping temperature entry due to missing 'camera_id' or 'zone_id' for lookup. Row: {row_dict}")
+                        continue
+
+                    current_temp_entry["camera_id_for_lookup"] = camera_id_for_lookup
+                    current_temp_entry["zone_id_for_lookup"] = zone_id_for_lookup
 
                     # Handle point_in_preset conversion for the mlc_temperatures table itself
                     if "point_in_preset" in current_temp_entry:
@@ -186,51 +198,63 @@ async def upload_file_data(
                 print(
                     f"[DEBUG] Inserted and committed mlc_camera_presets: {len(mlc_camera_presets_entries)} rows (new or existing)")
 
-                # Build a lookup map for preset_id using ONLY preset_number as key
+                # Build a lookup map for preset_id using composite key: (camera_id, zone_id, preset_number)
                 preset_id_map = {}
-                # Collect all unique preset numbers from the input data to query for existing presets
+                # Collect unique preset numbers to limit the query
                 all_preset_numbers_in_input = {int(e.get(
                     'preset_number')) for e in mlc_camera_presets_entries if e.get('preset_number') is not None}
 
-                # Fetch all relevant presets (inserted or pre-existing) that match any preset_number from the input
                 if all_preset_numbers_in_input:
-                    existing_presets_query = select(model.id, model.preset_number).filter(
+                    existing_presets_query = select(
+                        model.id, model.camera_id, model.zone_id, model.preset_number
+                    ).filter(
                         model.preset_number.in_(
                             list(all_preset_numbers_in_input))
                     )
                     existing_presets_result = await session.execute(existing_presets_query)
-                    for p_id, p_num in existing_presets_result:
-                        if p_num in preset_id_map:
-                            print(f"[WARNING] Duplicate preset_number '{p_num}' found in mlc_camera_presets. "
-                                  f"Overwriting preset_id from {preset_id_map[p_num]} to {p_id}. "
-                                  f"Consider if preset_number should be unique or if a different lookup key is needed.")
-                        preset_id_map[p_num] = p_id
+                    for p_id, p_camera_id, p_zone_id, p_num in existing_presets_result:
+                        key = (str(p_camera_id), str(p_zone_id), int(p_num))
+                        if key in preset_id_map:
+                            print(
+                                f"[WARNING] Duplicate composite preset key {key} found. Overwriting preset_id from {preset_id_map[key]} to {p_id}.")
+                        preset_id_map[key] = p_id
 
                 print(
-                    f"[DEBUG] Built preset_id_map with {len(preset_id_map)} entries (using preset_number as key).")
+                    f"[DEBUG] Built preset_id_map with {len(preset_id_map)} entries (using (camera_id, zone_id, preset_number) as key).")
 
                 # 4) Handle mlc_temperatures: Populate preset_id and insert
                 mlc_temperatures_to_insert = []
                 for temp_entry in temp_temperatures_data:
                     preset_number_for_lookup = temp_entry.get(
                         "preset_number_for_lookup")
+                    camera_id_for_lookup = temp_entry.get(
+                        "camera_id_for_lookup")
+                    zone_id_for_lookup = temp_entry.get("zone_id_for_lookup")
 
-                    if preset_number_for_lookup is not None:
-                        preset_id = preset_id_map.get(preset_number_for_lookup)
+                    if (
+                        preset_number_for_lookup is not None
+                        and camera_id_for_lookup is not None
+                        and zone_id_for_lookup is not None
+                    ):
+                        key = (str(camera_id_for_lookup), str(
+                            zone_id_for_lookup), int(preset_number_for_lookup))
+                        preset_id = preset_id_map.get(key)
                         if preset_id:
                             # Add the actual preset_id to the entry
                             temp_entry["preset_id"] = preset_id
 
-                            # Remove temporary lookup key before inserting
+                            # Remove temporary lookup keys before inserting
                             temp_entry.pop("preset_number_for_lookup", None)
+                            temp_entry.pop("camera_id_for_lookup", None)
+                            temp_entry.pop("zone_id_for_lookup", None)
 
                             mlc_temperatures_to_insert.append(temp_entry)
                         else:
                             print(
-                                f"[WARNING] Could not find preset_id for temperature entry with preset_number: {preset_number_for_lookup}. Original temp entry: {temp_entry}")
+                                f"[WARNING] Could not find preset_id for temperature entry with key {key}. Original temp entry: {temp_entry}")
                     else:
                         print(
-                            f"[WARNING] Missing 'preset_number_for_lookup' for temperature entry: {temp_entry}")
+                            f"[WARNING] Missing composite lookup info (camera_id/zone_id/preset_number) for temperature entry: {temp_entry}")
 
                 if mlc_temperatures_to_insert:
                     model = models["mlc_temperatures"]
