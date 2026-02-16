@@ -93,9 +93,9 @@ async def upload_file_data(
                     # Get the preset_number from the input row for lookup
                     preset_number_from_input = row_dict.get("preset_number")
 
-                    if preset_number_from_input is None:
+                    if preset_number_from_input is None or preset_number_from_input == "":
                         print(
-                            f"[WARNING] Skipping temperature entry due to missing 'preset_number' for lookup: {row_dict}")
+                            f"[WARNING] Skipping temperature entry due to missing or empty 'preset_number' for lookup: {row_dict}")
                         continue
 
                     try:
@@ -126,9 +126,6 @@ async def upload_file_data(
                         except (ValueError, TypeError):
                             print(
                                 f"[WARNING] Invalid 'point_in_preset' for mlc_temperatures entry (cannot convert to int): '{current_temp_entry.get('point_in_preset')}'. Row: {row_dict}")
-                            # If conversion fails, you might want to set it to None or skip the entry entirely
-                            # For now, we'll just log and keep the original value (or None if it was invalid)
-                            # Or handle as per your data requirements
                             current_temp_entry["point_in_preset"] = None
 
                     temp_temperatures_data.append(current_temp_entry)
@@ -174,19 +171,21 @@ async def upload_file_data(
         mlc_camera_presets_entries = result.get("mlc_camera_presets")
         if mlc_camera_presets_entries:
             model = models["mlc_camera_presets"]
-            # Ensure preset_number is int before insert
+            # Ensure preset_number is int before insert; keep only valid entries (0 is valid, "" is not).
+            valid_preset_entries = []
             for e in mlc_camera_presets_entries:
-                if "preset_number" in e:
-                    try:
-                        e["preset_number"] = int(e["preset_number"])
-                    except (ValueError, TypeError):
-                        print(
-                            f"[WARNING] Invalid preset_number for camera preset entry: {e.get('preset_number')}. Skipping entry.")
-                        continue  # Skip this entry if preset_number is invalid
+                if "preset_number" not in e:
+                    continue
+                try:
+                    e["preset_number"] = int(e["preset_number"])
+                    valid_preset_entries.append(e)
+                except (ValueError, TypeError):
+                    print(
+                        f"[WARNING] Invalid preset_number for camera preset entry: {e.get('preset_number')}. Skipping entry.")
 
             try:
                 # Use returning() to get the generated 'id' for newly inserted rows
-                stmt = pg_insert(model).values(mlc_camera_presets_entries).on_conflict_do_nothing(
+                stmt = pg_insert(model).values(valid_preset_entries).on_conflict_do_nothing(
                     index_elements=['camera_id', 'zone_id', 'preset_number']
                 ).returning(model.id, model.camera_id, model.zone_id, model.preset_number)
 
@@ -196,13 +195,20 @@ async def upload_file_data(
                 # Commit immediately to make IDs available for mlc_temperatures and for subsequent queries
                 await session.commit()
                 print(
-                    f"[DEBUG] Inserted and committed mlc_camera_presets: {len(mlc_camera_presets_entries)} rows (new or existing)")
+                    f"[DEBUG] Inserted and committed mlc_camera_presets: {len(valid_preset_entries)} rows (new or existing)")
 
                 # Build a lookup map for preset_id using composite key: (camera_id, zone_id, preset_number)
                 preset_id_map = {}
                 # Collect unique preset numbers to limit the query
-                all_preset_numbers_in_input = {int(e.get(
-                    'preset_number')) for e in mlc_camera_presets_entries if e.get('preset_number') is not None}
+                def _preset_num_val(e):
+                    v = e.get("preset_number")
+                    if v is None or v == "":
+                        return None
+                    try:
+                        return int(v)
+                    except (ValueError, TypeError):
+                        return None
+                all_preset_numbers_in_input = {x for e in valid_preset_entries if (x := _preset_num_val(e)) is not None}
 
                 if all_preset_numbers_in_input:
                     existing_presets_query = select(
